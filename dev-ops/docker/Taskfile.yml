@@ -1,0 +1,110 @@
+version: '2'
+
+tasks:
+
+    start:
+        desc: Start docker containers
+        deps: [check-permissions]
+        vars:
+            MSG_DOCKER_SYNC_START: "docker-sync is initially indexing files. It may take some minutes, until code changes take effect"
+            MSG_DOCKER_SYNC_OMIT: "env var DOCKER_SYNC_ENABLED not set to 'true'. Skipping start of docker-sync."
+        cmds:
+            -   cmd: |
+                    {{if $.DOCKER_SYNC_ENABLED}}
+                        {{if eq $.DOCKER_SYNC_ENABLED "true"}}
+                            docker-sync start
+                            echo "{{$.MSG_DOCKER_SYNC_START}}";
+                        {{end}}
+                    {{else}}
+                        echo "{{$.MSG_DOCKER_SYNC_OMIT}}";
+                    {{end}}
+                silent: true
+            - docker-compose build
+            - docker-compose up -d
+
+    stop:
+        desc: Stop docker containers
+        cmds:
+            -   cmd: |
+                    {{if $.DOCKER_SYNC_ENABLED}}
+                        {{if eq $.DOCKER_SYNC_ENABLED "true"}}
+                            docker-sync stop
+                        {{end}}
+                    {{end}}
+                silent: true
+            - docker-compose down --remove-orphans
+
+    ssh:
+        desc: Spawn a terminal session inside the app container
+        vars:
+            USERKEY:
+                sh: echo "$(id -u):$(id -g)"
+            APP_ID:
+                sh: docker-compose ps -q app_server
+        cmds:
+            - docker exec -i --env COLUMNS=`tput cols` --env LINES=`tput lines` -u {{.USERKEY}} -t {{.APP_ID}} bash
+
+    ssh-root:
+        desc: Spawn a terminal session AS ROOT inside the app container
+        vars:
+            APP_ID:
+                sh: docker-compose ps -q app_server
+        cmds:
+            - docker exec -i --env COLUMNS=`tput cols` --env LINES=`tput lines` -u 0 -t {{.APP_ID}} bash
+
+    ssh-mysql:
+        desc: Spawn a terminal session inside the mysql container
+        vars:
+            MYSQL_ID:
+                sh: docker-compose ps -q app_mysql
+        cmds:
+            - docker exec -ti {{.MYSQL_ID}} bash
+
+    check-permissions:
+        desc: Create neccessary folders and make sure docker runs with user rights
+        summary: |
+            Create neccessary folders and make sure docker runs with user rights
+
+            Create directories if they don't exists with user privileges.
+            Otherwise docker might create them with root privileges!
+
+        vars:
+            HOME:
+                sh: echo $HOME
+            PWD:
+                sh: echo $PWD
+            COMPOSER_DIR: "{{.HOME}}/.composer"
+            NPM_DIR: "{{.HOME}}/.npm"
+            ADMIN_E2E_DIR: "{{.PWD}}/vendor/shopware/platform/src/Administration/Resources/app/administration/test/e2e"
+            SF_E2E_DIR: "{{.PWD}}/vendor/shopware/platform/src/Storefront/Resources/app/storefront/test/e2e"
+            MSG_ERROR_OWNER: "ERROR: The owner of %v is root. This can cause problems with your docker setup. Please change the owner/group of these folders."
+            MSG_ERROR_DIR: "ERROR: Directory is not accessible: %v"
+
+        env:
+            DOCKER_SYNC_ENABLED: "false"
+
+        cmds:
+            - mkdir -p "{{.COMPOSER_DIR}}"
+            - mkdir -p "{{.NPM_DIR}}"
+            - mkdir -p "{{.ADMIN_E2E_DIR}}"
+            - mkdir -p "{{.SF_E2E_DIR}}"
+            -   cmd: |
+                    {{$DIRS := list .COMPOSER_DIR .NPM_DIR .ADMIN_E2E_DIR .SF_E2E_DIR}}
+                    {{range $DIRS}}
+                        (cd "{{.}}") || {
+                            echo "{{printf $.MSG_ERROR_DIR .}}";
+                            exit 1
+                            }
+                        {{if eq OS "darwin"}}
+                            if [[ $(stat -f '%Su' "$dir") == 'root' ]]; then
+                                echo "{{printf $.MSG_ERROR_OWNER .}}";
+                                exit 1
+                            fi
+                        {{else if eq OS "linux"}}
+                            if [[ $(stat -c '%U' "{{.}}") == 'root' ]]; then
+                                echo "{{printf $.MSG_ERROR_OWNER .}}";
+                                exit 1
+                            fi
+                        {{end}}
+                    {{end}}
+        silent: true

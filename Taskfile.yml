@@ -1,0 +1,10 @@
+version: '2'
+
+includes:
+    docker: ./dev-ops/docker
+
+tasks:
+    default:
+        cmds:
+            - cmd: task -l
+              silent: true
